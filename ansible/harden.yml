@@ -1,0 +1,262 @@
+---
+# harden.yml — комплексная защита сервера (Ansible-вариант harden.sh)
+#
+# Запуск:
+#   ansible-playbook harden.yml                      # с запросами параметров
+#   ansible-playbook -e skip_prompts=true -e ssh_port=2222 ...
+#   ansible-playbook harden.yml --tags ssh,firewall
+#
+# Порядок: обновления → ядро → PAM → SSH → файрвол → fail2ban → TLS/веб →
+# почта/DKIM/SPF/DMARC → CVE → бэкапы → мониторинг → права → verify.
+
+- name: harden.sh — комплексное укрепление сервера
+  hosts: hardened_servers
+  become: true
+  vars_prompt:
+    - name: enable_updates
+      prompt: "Модуль updates: обновления пакетов + авто-безопасность"
+      default: "yes"
+    - name: enable_kernel
+      prompt: "Модуль kernel: sysctl-харденинг ядра/сети"
+      default: "yes"
+    - name: kernel_forwarding
+      prompt: "  Включить forwarding (маршрутизатор)? no — обычный сервер"
+      default: "no"
+    - name: enable_pam
+      prompt: "Модуль pam: парольная политика, faillock, sudo"
+      default: "yes"
+    - name: enable_ssh
+      prompt: "Модуль ssh: жёсткая конфигурация OpenSSH"
+      default: "yes"
+    - name: ssh_port
+      prompt: "  Порт SSH"
+      default: "22"
+    - name: ssh_password_auth
+      prompt: "  Отключить парольную авторизацию SSH (yes=только ключи)"
+      default: "yes"
+    - name: ssh_permit_root
+      prompt: "  Запретить вход root по SSH"
+      default: "yes"
+    - name: enable_firewall
+      prompt: "Модуль firewall: ufw/firewalld (deny incoming)"
+      default: "yes"
+    - name: fw_allow_web
+      prompt: "  Открыть 80/443?"
+      default: "yes"
+    - name: fw_mail_ports
+      prompt: "  Открыть почтовые порты (25,465,587,993,995)? оставить пустым = нет"
+      default: ""
+    - name: enable_fail2ban
+      prompt: "Модуль fail2ban: баны по sshd/exim/dovecot/nginx"
+      default: "yes"
+    - name: enable_legacy
+      prompt: "Модуль legacy: telnet/rsh/ftp purge, запрет пустых паролей"
+      default: "yes"
+    - name: enable_tls_cert
+      prompt: "Модуль ssl: выпустить сертификат Let's Encrypt (certbot)?"
+      default: "no"
+    - name: ssl_domains
+      prompt: "  Домены (через пробел)"
+      default: ""
+    - name: ssl_email
+      prompt: "  Email для ACME"
+      default: "admin@example.com"
+    - name: enable_web_headers
+      prompt: "Модуль web: HSTS/CSP/анти-clickjacking + TLS-политика"
+      default: "yes"
+    - name: behind_cdn
+      prompt: "Модуль real_ip: сервер за CDN/proxy (ограничить 80/443 доверенными IP)?"
+      default: "no"
+    - name: cdn_trusted_ips
+      prompt: "  Доверенные IP/CIDR (пробел, пусто = авто Cloudflare при behind_cdn=yes)"
+      default: ""
+    - name: enable_mail
+      prompt: "Модуль mail: ужесточение SMTP/IMAP/POP3 (Exim/Postfix + Dovecot)"
+      default: "no"
+    - name: mail_domain
+      prompt: "  Почтовый домен"
+      default: ""
+    - name: enable_dkim
+      prompt: "  Выпустить DKIM-ключ и вывести DNS-запись?"
+      default: "yes"
+    - name: dkim_selector
+      prompt: "    DKIM-селектор"
+      default: "mail"
+    - name: spf_ip
+      prompt: "  IP сервера для SPF (ip4)"
+      default: ""
+    - name: spf_mode
+      prompt: "  Политика SPF: soft (~all) или hard (-all)"
+      default: "hard"
+    - name: dmarc_policy
+      prompt: "  Политика DMARC: none|quarantine|reject"
+      default: "quarantine"
+    - name: dmarc_rua
+      prompt: "  Email для DMARC-отчётов (rua)"
+      default: ""
+    - name: enable_cve_scan
+      prompt: "Модуль cve: проверка CVE по установленным Ubuntu-пакетам (API Canonical)"
+      default: "yes"
+    - name: cve_auto_upgrade
+      prompt: "  Автоматически обновить пакеты с доступными фиксами?"
+      default: "yes"
+    - name: enable_critical_updates
+      prompt: "Модуль critical_updates: точечное обновление OpenSSH/Exim/Dovecot/OpenSSL"
+      default: "yes"
+    - name: enable_backups
+      prompt: "Модуль backups: restic-бэкапы по расписанию"
+      default: "no"
+    - name: backup_repo
+      prompt: "  Репозиторий (путь / sftp: / s3:)"
+      default: "/var/backups/restic"
+    - name: backup_password
+      prompt: "  Пароль шифрования (оставьте пустым = сгенерировать)"
+      private: true
+      default: ""
+    - name: enable_monitoring
+      prompt: "Модуль monitoring: journald, chrony, node_exporter, AIDE, health-check"
+      default: "yes"
+    - name: enable_auditd
+      prompt: "Модуль permissions: auditd (журнал изменений критичных файлов)"
+      default: "yes"
+
+  handlers:
+    - name: restart sshd
+      service: name={{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }} state=restarted
+    - name: reload nginx
+      service: name=nginx state=reloaded
+    - name: restart nginx
+      service: name=nginx state=restarted
+    - name: restart apache
+      service: name={{ 'apache2' if ansible_os_family == 'Debian' else 'httpd' }} state=restarted
+    - name: restart fail2ban
+      service: name=fail2ban state=restarted
+    - name: restart exim
+      service: name={{ 'exim4' if ansible_os_family == 'Debian' else 'exim' }} state=restarted
+    - name: restart postfix
+      service: name=postfix state=restarted
+    - name: restart dovecot
+      service: name=dovecot state=restarted
+    - name: reload sysctl
+      command: sysctl --system
+      changed_when: false
+
+  pre_tasks:
+    - name: Определение ОС и компонентов
+      ansible.builtin.setup:
+        gather_subset: min
+    - name: Каталог отчётов
+      ansible.builtin.file:
+        path: "{{ harden_report_dir }}"
+        state: directory
+        mode: "0700"
+    - name: Определение семейства пакетов
+      ansible.builtin.set_fact:
+        pkg_mgr_family: >-
+          {{ 'apt' if ansible_pkg_mgr == 'apt' else
+             (ansible_pkg_mgr if ansible_pkg_mgr in ['dnf','yum','zypper','pacman','apk'] else 'unknown') }}
+        detected_web: >-
+          {{ 'nginx' if 'nginx' in ansible_facts.packages | default({})
+             else ('apache2' if ('apache2' in ansible_facts.packages | default({}) or 'httpd' in ansible_facts.packages | default({}))
+             else 'none') }}
+        detected_mta: >-
+          {{ 'exim' if ('exim4' in ansible_facts.packages | default({}) or 'exim4-daemon-light' in ansible_facts.packages | default({}))
+             else ('postfix' if 'postfix' in ansible_facts.packages | default({}) else 'none') }}
+        detected_dovecot: "{{ 'dovecot' if 'dovecot' in ansible_facts.packages | default({}) else 'none' }}"
+
+  tasks:
+    - name: 01. Обновления и авто-безопасность
+      ansible.builtin.include_tasks: tasks/updates.yml
+      when: enable_updates | default(true) | bool
+      tags: [updates]
+
+    - name: '02. sysctl: ядро и сеть'
+      ansible.builtin.include_tasks: tasks/kernel.yml
+      when: enable_kernel | default(true) | bool
+      tags: [kernel]
+
+    - name: 03. PAM / пароли / sudo
+      ansible.builtin.include_tasks: tasks/pam.yml
+      when: enable_pam | default(true) | bool
+      tags: [pam]
+
+    - name: 04. SSH
+      ansible.builtin.include_tasks: tasks/ssh.yml
+      when: enable_ssh | default(true) | bool
+      tags: [ssh]
+
+    - name: 05. Firewall
+      ansible.builtin.include_tasks: tasks/firewall.yml
+      when: enable_firewall | default(true) | bool
+      tags: [firewall]
+
+    - name: 06. Fail2ban
+      ansible.builtin.include_tasks: tasks/fail2ban.yml
+      when: enable_fail2ban | default(true) | bool
+      tags: [fail2ban]
+
+    - name: 07. Legacy-протоколы / небезопасная авторизация
+      ansible.builtin.include_tasks: tasks/legacy.yml
+      when: enable_legacy | default(true) | bool
+      tags: [legacy]
+
+    - name: 08. TLS-сертификаты (ACME)
+      ansible.builtin.include_tasks: tasks/ssl.yml
+      when: enable_tls_cert | default(false) | bool
+      tags: [ssl]
+
+    - name: 09. Web-заголовки + TLS-политика
+      ansible.builtin.include_tasks: tasks/web_headers.yml
+      when: enable_web_headers | default(true) | bool
+      tags: [web]
+
+    - name: 10. Реальный IP / периметр
+      ansible.builtin.include_tasks: tasks/real_ip.yml
+      when: behind_cdn | default(false) | bool
+      tags: [realip]
+
+    - name: '11. Почта: Exim/Postfix + Dovecot'
+      ansible.builtin.include_tasks: tasks/mail.yml
+      when: enable_mail | default(false) | bool
+      tags: [mail]
+
+    - name: 12. DKIM / SPF / DMARC (DNS-записи + ключ)
+      ansible.builtin.include_tasks: tasks/email_auth.yml
+      when: enable_mail | default(false) | bool
+      tags: [mail, dns]
+
+    - name: 13. CVE-скан (Ubuntu API)
+      ansible.builtin.include_tasks: tasks/cve.yml
+      when: enable_cve_scan | default(true) | bool and ansible_distribution == 'Ubuntu'
+      tags: [cve]
+
+    - name: 14. Точечное обновление критичных пакетов
+      ansible.builtin.include_tasks: tasks/critical_updates.yml
+      when: enable_critical_updates | default(true) | bool
+      tags: [updates]
+
+    - name: 15. Резервные копии (restic)
+      ansible.builtin.include_tasks: tasks/backups.yml
+      when: enable_backups | default(false) | bool
+      tags: [backups]
+
+    - name: 16. Мониторинг и алерты
+      ansible.builtin.include_tasks: tasks/monitoring.yml
+      when: enable_monitoring | default(true) | bool
+      tags: [monitoring]
+
+    - name: 17. Права, SUID, auditd
+      ansible.builtin.include_tasks: tasks/permissions.yml
+      tags: [permissions]
+
+    - name: 18. Верификация и отчёт
+      ansible.builtin.include_tasks: tasks/verify.yml
+      tags: [verify]
+
+  post_tasks:
+    - name: Итоговое сообщение
+      ansible.builtin.debug:
+        msg:
+          - "Готово. Отчёт: {{ harden_report_dir }}/report.txt"
+          - "DNS-записи (DKIM/SPF/DMARC) выведите в DNS: {{ harden_report_dir }}/"
+          - "Проверьте SSH-доступ в новой сессии, прежде чем закрывать текущую!"

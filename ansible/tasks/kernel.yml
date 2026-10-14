@@ -1,0 +1,17 @@
+---
+# 02. sysctl: ядро и сеть
+- name: Установка sysctl-харденинга
+  ansible.builtin.template:
+    src: ../templates/sysctl_hardening.conf.j2
+    dest: /etc/sysctl.d/99-hardening.conf
+    mode: "0644"
+  notify: reload sysctl
+
+- name: Ограничение core dumps
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/99-harden-nocore.conf
+    mode: "0644"
+    content: |
+      # harden.sh
+      * hard core 0
+      root hard core 0

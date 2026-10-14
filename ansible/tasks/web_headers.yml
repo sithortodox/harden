@@ -1,0 +1,48 @@
+---
+# 09. Web: заголовки + TLS-политика (nginx | apache)
+- name: Определение web-сервера
+  ansible.builtin.set_fact:
+    web_srv: >-
+      {% if 'nginx' in ansible_facts.packages | default({}) %}nginx
+      {% elif 'apache2' in ansible_facts.packages | default({}) %}apache2
+      {% elif 'httpd' in ansible_facts.packages | default({}) %}apache2
+      {% else %}none{% endif %}
+
+- name: 'nginx: заголовки + TLS'
+  ansible.builtin.template:
+    src: ../templates/nginx_security_headers.conf.j2
+    dest: /etc/nginx/conf.d/00-security-headers.conf
+    mode: "0644"
+  register: nginx_harden
+  when: web_srv == 'nginx'
+
+- name: 'nginx: конфигурация после правок'
+  ansible.builtin.command: nginx -t
+  changed_when: false
+  failed_when: false
+  when: nginx_harden is changed
+
+- name: 'nginx: reload'
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  when: nginx_harden is changed
+
+- name: 'apache: заголовки (conf)'
+  ansible.builtin.template:
+    src: ../templates/nginx_security_headers.conf.j2
+    dest: /etc/apache2/conf-available/harden-security.conf
+    mode: "0644"
+  register: apache_harden
+  when: web_srv == 'apache2'
+
+- name: 'apache: включение conf'
+  ansible.builtin.command: a2enconf harden-security
+  when: apache_harden is changed
+  changed_when: true
+
+- name: 'apache: reload'
+  ansible.builtin.service:
+    name: apache2
+    state: reloaded
+  when: apache_harden is changed

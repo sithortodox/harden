@@ -1,0 +1,41 @@
+---
+# 08. TLS-сертификаты (Let's Encrypt / certbot)
+- name: Установка certbot
+  ansible.builtin.package:
+    name: certbot
+    state: present
+  when: "'certbot' not in ansible_facts.packages"
+
+- name: Выпуск сертификата (webroot)
+  ansible.builtin.command: >
+    certbot certonly --non-interactive --agree-tos
+    --email {{ ssl_email }}
+    -d {{ ssl_domains.split() | join(' -d ') }}
+    --webroot -w /var/www/html
+    --deploy-hook 'systemctl reload nginx'
+  args:
+    creates: "/etc/letsencrypt/live/{{ ssl_domains.split()[0] }}/fullchain.pem"
+  when: ssl_domains | default('') | length > 0
+
+- name: Факт домена сертификата
+  ansible.builtin.set_fact:
+    ssl_cert_domain: "{{ ssl_domains.split()[0] }}"
+
+- name: Директория автообновления
+  ansible.builtin.file:
+    path: /etc/letsencrypt/renewal-hooks
+    state: directory
+    mode: "0755"
+
+- name: Deploy-hook (перезапуск MTA)
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/renewal-hooks/deploy/harden-mta.sh
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # harden.sh: подхватить новый сертификат в Exim/Postfix
+      cp -L /etc/letsencrypt/live/{{ ssl_cert_domain }}/fullchain.pem /etc/ssl/harden/mail.crt
+      cp /etc/letsencrypt/live/{{ ssl_cert_domain }}/privkey.pem /etc/ssl/harden/mail.key
+      chmod 640 /etc/ssl/harden/mail.key
+      chgrp ssl-cert /etc/ssl/harden/mail.key 2>/dev/null || true
+      command -v systemctl >/dev/null && systemctl try-reload-or-restart exim4 postfix 2>/dev/null || true

@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Ansible/harden.sh: проверка CVE по установленным Ubuntu source-пакетам.
+
+Использует публичный API https://ubuntu.com/security/cves.json?package=<src>
+и фильтрует статусы для текущего релиза (needed/pending/deferred/released).
+"""
+import json, sys, time, urllib.request, urllib.parse, subprocess
+
+codename = "{{ ansible_distribution_release }}"
+mode = "{{ cve_scan_mode | default('quick') }}"
+watch = {"needed", "pending", "deferred", "released"}
+key_sources = [
+    "openssh", "openssl", "exim4", "dovecot2", "nginx", "apache2", "linux",
+    "glibc", "sudo", "systemd", "curl", "wget", "git", "python3", "perl",
+]
+
+def installed_sources():
+    if mode == "full":
+        out = subprocess.run(
+            ["dpkg-query", "-W", "-f=${source:Package}\n"],
+            capture_output=True, text=True).stdout
+        return sorted({s.split(" (")[0] for s in out.splitlines() if s.strip()})
+    srcs = set()
+    for b in key_sources + [
+        "openssh-server", "openssh-client", "exim4-daemon-light",
+        "exim4-daemon-heavy", "dovecot-imapd", "dovecot-pop3d",
+        "libssl3", "libssl3t64", "libc6",
+    ]:
+        r = subprocess.run(["dpkg-query", "-W", "-f=${source:Package}", b],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            srcs.add(r.stdout.strip().split(" (")[0])
+    return sorted(srcs)
+
+rows, errors = [], []
+pkgs = installed_sources()
+for i, pkg in enumerate(pkgs, 1):
+    url = "https://ubuntu.com/security/cves.json?package=" + urllib.parse.quote(pkg) + "&limit=1000"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "harden-ansible"})
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = json.load(r)
+    except Exception as e:
+        errors.append(f"{pkg}: {e}")
+        continue
+    for cve in data.get("cves", []):
+        for p in cve.get("packages", []):
+            if p.get("name") != pkg:
+                continue
+            for st in p.get("statuses", []):
+                if st.get("release_codename") == codename and st.get("status") in watch:
+                    rows.append({
+                        "pkg": pkg, "cve": cve.get("id", "?"),
+                        "priority": cve.get("priority") or "unknown",
+                        "status": st.get("status"),
+                        "desc": (cve.get("ubuntu_description") or cve.get("description") or "").strip().replace("\n", " ")[:160],
+                    })
+    print(f"[{i}/{len(pkgs)}] {pkg}", file=sys.stderr)
+    time.sleep(0.25)
+
+order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "negligible": 4}
+rows.sort(key=lambda r: (order.get(r["priority"], 9), r["pkg"], r["cve"]))
+report = f"{{ harden_report_dir }}/cve-{codename}.txt"
+with open(report, "w") as f:
+    f.write(f"# CVE {codename}: пакетов={len(pkgs)}, проблем={len(rows)}\n\n")
+    for r in rows:
+        f.write(f"{r['priority'].upper():10} {r['status']:9} {r['pkg']:20} {r['cve']:18} {r['desc']}\n")
+print(f"TOTAL={len(rows)} "
+      f"NEEDED={sum(1 for r in rows if r['status'] in ('needed','pending','deferred'))} "
+      f"RELEASED={sum(1 for r in rows if r['status']=='released')} "
+      f"REPORT={report}")
+if errors:
+    print("ERRORS:", *errors[:5], sep="\n  ")
+# пакеты с фиксами — для авто-обновления
+fixable = sorted({r["pkg"] for r in rows if r["status"] == "released"})
+print("FIXABLE_SOURCES=" + ",".join(fixable))

@@ -1,0 +1,55 @@
+# Ansible/harden.sh
+[DEFAULT]
+bantime  = {{ fail2ban_bantime }}
+findtime = {{ fail2ban_findtime }}
+maxretry = {{ fail2ban_maxretry }}
+ignoreip = {{ fail2ban_ignoreip }}
+destemail = {{ fail2ban_destemail }}
+sender    = fail2ban@{{ ansible_fqdn | default(ansible_hostname) }}
+mta       = mail
+backend   = {{ 'systemd' if ansible_service_mgr == 'systemd' else 'auto' }}
+banaction = iptables-multiport
+
+[sshd]
+enabled = true
+port    = {{ ssh_port | default(22) }}
+mode    = aggressive
+
+[recidive]
+enabled   = true
+logpath   = /var/log/fail2ban.log
+banaction = iptables-allports
+bantime   = 604800
+findtime  = 86400
+maxretry  = 3
+
+{% if detected_mta == 'exim' %}
+[exim]
+enabled = true
+
+[exim-spam]
+enabled = true
+
+[exim-auth]
+enabled = true
+{% elif detected_mta == 'postfix' %}
+[postfix]
+enabled = true
+
+[postfix-sasl]
+enabled = true
+{% endif %}
+{% if detected_dovecot == 'dovecot' %}
+[dovecot]
+enabled = true
+{% endif %}
+{% if detected_web == 'nginx' %}
+[nginx-http-auth]
+enabled = true
+
+[nginx-botsearch]
+enabled = true
+{% elif detected_web in ['apache2', 'httpd'] %}
+[apache-auth]
+enabled = true
+{% endif %}

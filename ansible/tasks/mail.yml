@@ -1,0 +1,130 @@
+---
+# 11. Почта: жёсткое ужесточение Exim/Postfix + Dovecot
+- name: Каталог /etc/ssl/harden
+  ansible.builtin.file:
+    path: /etc/ssl/harden
+    state: directory
+    mode: "0750"
+
+- name: Копия сертификата (если есть)
+  ansible.builtin.copy:
+    src: "/etc/letsencrypt/live/{{ ssl_cert_domain }}/fullchain.pem"
+    dest: /etc/ssl/harden/mail.crt
+    remote_src: true
+    mode: "0644"
+  when: ssl_cert_domain is defined
+  failed_when: false
+
+- name: Копия ключа (если есть)
+  ansible.builtin.copy:
+    src: "/etc/letsencrypt/live/{{ ssl_cert_domain }}/privkey.pem"
+    dest: /etc/ssl/harden/mail.key
+    remote_src: true
+    mode: "0640"
+  when: ssl_cert_domain is defined
+  failed_when: false
+
+# --- Exim ---
+- name: Каталоги Exim
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /etc/exim4/harden
+    - /etc/exim4/dkim
+  when: detected_mta == 'exim'
+  failed_when: false
+
+- name: 'Exim: макросы'
+  ansible.builtin.template:
+    src: ../templates/exim_localmacros.j2
+    dest: /etc/exim4/harden/localmacros
+    mode: "0644"
+  when: detected_mta == 'exim'
+  register: exim_macros
+
+- name: 'Exim: харденинг main'
+  ansible.builtin.template:
+    src: ../templates/exim_main_hardening.j2
+    dest: /etc/exim4/harden/main_hardening.conf
+    mode: "0644"
+  when: detected_mta == 'exim'
+  register: exim_main
+
+- name: 'Exim: VRFY/EXPN ACL'
+  ansible.builtin.template:
+    src: ../templates/exim_acl_acls.j2
+    dest: /etc/exim4/harden/acls.conf
+    mode: "0644"
+  when: detected_mta == 'exim'
+  register: exim_acls
+
+- name: 'Exim: ACL rcpt (SPF)'
+  ansible.builtin.template:
+    src: ../templates/exim_acl_rcpt.inc.j2
+    dest: /etc/exim4/harden/acl_rcpt.inc
+    mode: "0644"
+  when: detected_mta == 'exim'
+  register: exim_rcpt
+
+- name: 'Exim: ACL data'
+  ansible.builtin.template:
+    src: ../templates/exim_acl_data.inc.j2
+    dest: /etc/exim4/harden/acl_data.inc
+    mode: "0644"
+  when: detected_mta == 'exim'
+  register: exim_data
+
+- name: 'Exim: AUTH (только по TLS)'
+  ansible.builtin.template:
+    src: ../templates/exim_auth_hardening.j2
+    dest: /etc/exim4/harden/auth.conf
+    mode: "0644"
+  when: detected_mta == 'exim'
+  register: exim_auth
+
+- name: 'Exim: подключение харденинга к main.conf'
+  ansible.builtin.lineinfile:
+    path: /etc/exim4/exim4.conf.template
+    regexp: '^# harden\.sh include'
+    line: '.include /etc/exim4/harden/main_hardening.conf'
+    insertafter: EOF
+  when: detected_mta == 'exim' and exim_macros is changed
+  failed_when: false
+
+- name: 'Exim: пересборка конфигурации'
+  ansible.builtin.command: update-exim4.conf
+  when: detected_mta == 'exim' and
+        (exim_macros is changed or exim_main is changed or exim_auth is changed)
+  changed_when: true
+  failed_when: false
+
+- name: 'Exim: перезапуск'
+  ansible.builtin.service:
+    name: exim4
+    state: restarted
+  when: detected_mta == 'exim' and
+        (exim_macros is changed or exim_main is changed or exim_auth is changed)
+  failed_when: false
+
+# --- Dovecot ---
+- name: 'Dovecot: жёсткая конфигурация'
+  ansible.builtin.template:
+    src: ../templates/dovecot_hardening.conf.j2
+    dest: /etc/dovecot/conf.d/99-harden.conf
+    mode: "0644"
+  when: detected_dovecot == 'dovecot'
+  register: dovecot_harden
+
+- name: 'Dovecot: проверка'
+  ansible.builtin.command: dovecot -n
+  changed_when: false
+  failed_when: false
+  when: dovecot_harden is changed
+
+- name: 'Dovecot: перезапуск'
+  ansible.builtin.service:
+    name: dovecot
+    state: restarted
+  when: dovecot_harden is changed

@@ -1,0 +1,9 @@
+# Ansible/harden.sh: дополнения acl_check_data
+
+  # Authentication-Results и Received-SPF
+  warn
+    add_header = :at_start:${authresults {$primary_hostname}}
+
+  warn
+    condition = ${if def:spf_received}
+    add_header = :at_start:$spf_received

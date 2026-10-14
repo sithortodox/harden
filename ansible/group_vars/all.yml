@@ -1,0 +1,55 @@
+---
+# Значения по умолчанию. Ключевые параметры запрашиваются через vars_prompt
+# в harden.yml; здесь — остальное. Можно переопределить: -e key=value
+# или в inventory host_vars/group_vars.
+
+# --- SSH ---
+ssh_ciphers: "chacha20-poly1305@openssh.com,aes128-gcm@openssh.com,aes256-gcm@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr"
+ssh_macs: "umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128@openssh.com"
+ssh_kex: "curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp521,ecdh-sha2-nistp384,ecdh-sha2-nistp256,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256"
+ssh_hostkey_algos: "ssh-ed25519,rsa-sha2-512,rsa-sha2-256"
+ssh_max_auth_tries: 3
+ssh_client_alive_interval: 300
+ssh_client_alive_count_max: 2
+
+# --- sysctl: true — forwarding (маршрутизатор) ---
+kernel_forwarding: false
+
+# --- fail2ban ---
+fail2ban_bantime: 3600
+fail2ban_findtime: 600
+fail2ban_maxretry: 4
+fail2ban_ignoreip: "127.0.0.1 ::1"
+fail2ban_destemail: root
+
+# --- TLS / веб (Mozilla guideline 6.0, intermediate) ---
+tls_ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
+tls_ciphersuites: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
+hsts_max_age: 63072000
+hsts_include_subdomains: true
+hsts_preload: false
+csp_policy: "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+coep_enabled: false
+web_server: auto            # auto|nginx|apache2|none
+
+# --- Почта ---
+dkim_key_bits: 2048
+mail_submission_port: 587
+mail_implicit_tls_465: false
+exim_spf_reject: true
+
+# --- Бэкапы ---
+backup_tool: restic
+backup_paths: "/etc /root /home /var/www"
+backup_excludes: "*/cache/* */.cache/* */node_modules/* *.sock"
+backup_keep_daily: 7
+backup_keep_weekly: 4
+backup_keep_monthly: 6
+backup_hour: 3
+
+# --- Мониторинг ---
+monitor_exporter_port: 9100
+monitor_health_email: root
+
+# --- Пути ---
+harden_report_dir: /root/harden-ansible

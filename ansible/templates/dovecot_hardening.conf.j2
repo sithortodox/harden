@@ -1,0 +1,36 @@
+# Ansible/harden.sh: жёсткая конфигурация Dovecot (IMAP/POP3)
+ssl = required
+ssl_min_protocol = TLSv1.2
+ssl_cert = <{{ mail_cert | default('/etc/ssl/harden/mail.crt') }}
+ssl_key = <{{ mail_key | default('/etc/ssl/harden/mail.key') }}
+disable_plaintext_auth = yes
+auth_mechanisms = plain login
+auth_failure_delay = 2 secs
+mail_max_userip_connections = 30
+login_tries = 3
+login_max_connections = 75
+verbose_ssl = no
+
+protocol imap {
+  mail_max_userip_connections = 20
+}
+
+service imap-login {
+  inet_listener imap {
+    port = 0
+  }
+  inet_listener imaps {
+    port = 993
+    ssl = yes
+  }
+}
+
+service pop3-login {
+  inet_listener pop3 {
+    port = 0
+  }
+  inet_listener pop3s {
+    port = 995
+    ssl = yes
+  }
+}

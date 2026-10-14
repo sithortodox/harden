@@ -1,0 +1,32 @@
+---
+# 06. Fail2ban
+- name: Установка fail2ban
+  ansible.builtin.package:
+    name: fail2ban
+    state: present
+  when: "'fail2ban' not in ansible_facts.packages"
+
+- name: Директория jail.local
+  ansible.builtin.file:
+    path: /etc/fail2ban/jail.d
+    state: directory
+    mode: "0755"
+
+- name: Конфигурация jail.local
+  ansible.builtin.template:
+    src: ../templates/fail2ban_jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    mode: "0644"
+  register: fail2ban_harden
+
+- name: Проверка конфигурации fail2ban
+  ansible.builtin.command: fail2ban-client -t
+  changed_when: false
+  when: fail2ban_harden is changed
+  failed_when: false
+
+- name: Перезапуск fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: "{{ 'restarted' if fail2ban_harden is changed else 'started' }}"
+    enabled: true

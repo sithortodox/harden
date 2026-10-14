@@ -1,0 +1,15 @@
+# Ansible/harden.sh — макросы Exim (Debian split config)
+MAIN_TLS_CERTIFICATE = {{ mail_cert | default('/etc/ssl/harden/mail.crt') }}
+MAIN_TLS_PRIVATEKEY  = {{ mail_key | default('/etc/ssl/harden/mail.key') }}
+MAIN_TLS_ADVERTISE_HOSTS = *
+MAIN_TLS_TRY_VERIFY_HOSTS =
+CHECK_RCPT_LOCAL_ACL_FILE = /etc/exim4/harden/acl_rcpt.inc
+CHECK_DATA_LOCAL_ACL_FILE = /etc/exim4/harden/acl_data.inc
+{% if enable_dkim | default(false) | bool %}
+DKIM_DOMAIN = {{ mail_domain }}
+DKIM_SELECTOR = {{ dkim_selector | default('mail') }}
+DKIM_PRIVATE_KEY = /etc/exim4/dkim/{{ mail_domain }}.{{ dkim_selector | default('mail') }}.key
+DKIM_CANON = relaxed
+DKIM_STRICT = false
+DKIM_TIMESTAMPS = 1209600
+{% endif %}

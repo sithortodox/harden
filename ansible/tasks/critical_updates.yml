@@ -1,0 +1,24 @@
+---
+# 14. Точечное обновление критичных пакетов
+- name: Кандидаты (openssh/openssl/exim/dovecot)
+  ansible.builtin.command: "apt list --upgradable 2>/dev/null"
+  register: apt_upgradable
+  when: pkg_mgr_family == 'apt'
+  changed_when: false
+  failed_when: false
+
+- name: Фильтр критичных пакетов
+  ansible.builtin.set_fact:
+    critical_upgradable: >-
+      {{ apt_upgradable.stdout_lines | default([])
+         | select('search', '^(openssh|openssl|exim|dovecot|nginx|apache2|curl|git)/')
+         | map('regex_replace', '/.*', '')
+         | unique | list }}
+  when: pkg_mgr_family == 'apt'
+
+- name: Обновление критичных пакетов
+  ansible.builtin.apt:
+    name: "{{ critical_upgradable }}"
+    state: latest
+  when: pkg_mgr_family == 'apt' and critical_upgradable | default([]) | length > 0
+  failed_when: false

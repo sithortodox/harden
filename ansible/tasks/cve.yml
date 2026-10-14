@@ -1,0 +1,46 @@
+---
+# 13. CVE-скан (только Ubuntu)
+- name: Установка python3
+  ansible.builtin.package:
+    name: python3
+    state: present
+  when: "'python3' not in ansible_facts.packages"
+
+- name: CVE-сканер
+  ansible.builtin.template:
+    src: ../templates/cve_scan.py.j2
+    dest: /usr/local/sbin/harden-cve-scan.py
+    mode: "0755"
+
+- name: Запуск CVE-скана
+  ansible.builtin.command: python3 /usr/local/sbin/harden-cve-scan.py
+  register: cve_result
+  changed_when: false
+  when: cve_scan_mode | default('quick') != 'watch'
+
+- name: Вывод CVE
+  ansible.builtin.debug:
+    msg: "{{ cve_result.stdout_lines }}"
+
+- name: Извлечение пакетов с доступными фиксами
+  ansible.builtin.set_fact:
+    cve_fixable: "{{ (cve_result.stdout | default('') | regex_search('FIXABLE_SOURCES=(.*)', '\\1') | first | default('')).split(',') | select('ne', '') | list }}"
+  when: cve_result is defined and cve_result.stdout is defined
+
+- name: Обновление пакетов с фиксами (apt)
+  ansible.builtin.apt:
+    name: "{{ cve_fixable }}"
+    state: latest
+    update_cache: true
+  when: cve_auto_upgrade | default(true) | bool and
+        pkg_mgr_family == 'apt' and
+        cve_fixable | default([]) | length > 0
+  failed_when: false
+
+- name: Перезапуск затронутых сервисов
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: restarted
+  loop: [ssh, nginx, apache2, exim4, postfix, dovecot]
+  when: cve_auto_upgrade | default(true) | bool and cve_fixable | default([]) | length > 0
+  failed_when: false

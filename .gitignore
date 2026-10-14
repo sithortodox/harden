@@ -1,0 +1,7 @@
+# Локальные артефакты
+*.log
+*.tar.gz
+answers.txt
+ansible/inventory/hosts.yml
+__pycache__/
+.DS_Store

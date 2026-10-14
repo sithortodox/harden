@@ -1,0 +1,7 @@
+[Unit]
+Description=Ежедневный бэкап harden.sh (restic)
+[Timer]
+OnCalendar=*-*-* {{ backup_hour }}:15:00
+Persistent=true
+[Install]
+WantedBy=timers.target

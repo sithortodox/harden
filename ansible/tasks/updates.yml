@@ -1,0 +1,56 @@
+---
+# 01. Обновления и авто-безопасность
+- name: Обновление индексов пакетов (apt)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when: pkg_mgr_family == 'apt'
+
+- name: Полное обновление пакетов (apt)
+  ansible.builtin.apt:
+    upgrade: dist
+    autoremove: true
+  when: pkg_mgr_family == 'apt'
+
+- name: Полное обновление пакетов (dnf/yum/zypper/pacman)
+  ansible.builtin.command: "{{ pkg_mgr_family }} -y upgrade"
+  when: pkg_mgr_family in ['dnf', 'yum']
+  changed_when: false
+
+- name: Установка unattended-upgrades (apt)
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+  when: pkg_mgr_family == 'apt'
+
+- name: Конфигурация 20auto-upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    mode: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+  when: pkg_mgr_family == 'apt'
+
+- name: Конфигурация unattended-upgrades (локальная)
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/51unattended-upgrades-local
+    mode: "0644"
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Mail "root";
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::SyslogEnable "true";
+  when: pkg_mgr_family == 'apt'
+
+- name: Включение таймеров авто-обновления (apt)
+  ansible.builtin.command: "systemctl enable --now {{ item }}"
+  loop:
+    - unattended-upgrades.service
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+  when: pkg_mgr_family == 'apt' and ansible_service_mgr == 'systemd'
+  failed_when: false
+  changed_when: false

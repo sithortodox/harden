@@ -1,0 +1,55 @@
+---
+# 12. DKIM / SPF / DMARC — ключ + DNS-записи в /root/harden-ansible/
+- name: Генерация DKIM-ключа (Exim)
+  ansible.builtin.shell: |
+    KEY=/etc/exim4/dkim/{{ mail_domain }}.{{ dkim_selector }}.key
+    if [ ! -f "$KEY" ]; then
+      openssl genrsa -out "$KEY" {{ dkim_key_bits }} 2>/dev/null
+      chmod 640 "$KEY"
+      chown root:Debian-exim "$KEY" 2>/dev/null || chown root:exim "$KEY" 2>/dev/null || true
+    fi
+  args:
+    executable: /bin/bash
+    creates: "/etc/exim4/dkim/{{ mail_domain }}.{{ dkim_selector }}.key"
+  when: enable_dkim | default(false) | bool and detected_mta == 'exim'
+  changed_when: false
+
+- name: Извлечение публичного ключа DKIM
+  ansible.builtin.shell: |
+    openssl rsa -in /etc/exim4/dkim/{{ mail_domain }}.{{ dkim_selector }}.key \
+      -pubout -outform DER 2>/dev/null | base64 -w0
+  register: dkim_pubkey
+  changed_when: false
+  when: enable_dkim | default(false) | bool and detected_mta == 'exim'
+
+- name: DNS-запись DKIM
+  ansible.builtin.copy:
+    dest: "{{ harden_report_dir }}/dns-dkim.txt"
+    mode: "0600"
+    content: |
+      # Добавьте в DNS зоны {{ mail_domain }} (TXT):
+      {{ dkim_selector }}._domainkey IN TXT "v=DKIM1; k=rsa; p={{ dkim_pubkey.stdout }}"
+  when: enable_dkim | default(false) | bool and detected_mta == 'exim'
+
+- name: DNS-запись SPF
+  ansible.builtin.copy:
+    dest: "{{ harden_report_dir }}/dns-spf.txt"
+    mode: "0600"
+    content: |
+      # {{ mail_domain }} (TXT) — политика: {{ spf_mode | default('hard') }}
+      @ IN TXT "v=spf1 mx a ip4:{{ spf_ip | default(ansible_default_ipv4.address) }} {{ '~' if spf_mode | default('hard') == 'soft' else '-' }}all"
+  when: spf_ip | default('') | length > 0
+
+- name: DNS-запись DMARC
+  ansible.builtin.copy:
+    dest: "{{ harden_report_dir }}/dns-dmarc.txt"
+    mode: "0600"
+    content: |
+      # _dmarc.{{ mail_domain }} (TXT) — политика: {{ dmarc_policy | default('quarantine') }}
+      _dmarc IN TXT "v=DMARC1; p={{ dmarc_policy | default('quarantine') }}; rua=mailto:{{ dmarc_rua | default('dmarc-reports@' + mail_domain) }}; adkim=r; aspf=r; pct=100"
+  when: mail_domain | default('') | length > 0
+
+- name: Рекомендация по переходу политики
+  ansible.builtin.debug:
+    msg: "DMARC: начните с p=none, наблюдайте отчёты 1–2 недели, затем quarantine → reject (переключите dmarc_policy). SPF: начните ~all → -all."
+  when: mail_domain | default('') | length > 0

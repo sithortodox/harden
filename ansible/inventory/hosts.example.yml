@@ -1,0 +1,9 @@
+# Пример inventory. Скопируйте в hosts.yml и укажите свой сервер.
+all:
+  children:
+    hardened_servers:
+      hosts:
+        server1:
+          ansible_host: 203.0.113.10
+          ansible_user: root
+          # ansible_port: 22

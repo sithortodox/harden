@@ -1,0 +1,15 @@
+# Ansible/harden.sh: жёсткая конфигурация Exim
+daemon_smtp_ports = 25 : {{ mail_submission_port }}{% if mail_implicit_tls_465 | bool %} : 465{% endif %}
+
+{% if mail_implicit_tls_465 | bool %}
+tls_on_connect_ports = 465
+{% endif %}
+tls_require_ciphers = {{ tls_ciphers }}
+tls_ciphersuites = {{ tls_ciphersuites }}
+tls_ecdhe_curves = X25519MLKEM768 : X25519 : prime256v1 : secp384r1
+smtp_accept_max = 50
+smtp_accept_queue_per_connection = 10
+queue_run_max = 8
+smtp_max_helo_length = 96
+acl_smtp_vrfy = acl_harden_vrfy
+acl_smtp_expn = acl_harden_expn

@@ -1,0 +1,57 @@
+---
+# 17. Права файлов, world-writable, SUID, auditd
+- name: Поиск world-writable (кроме tmp/dev/proc/sys)
+  ansible.builtin.shell: |
+    find / -xdev \( -path /tmp -o -path /var/tmp -o -path /dev -o -path /proc -o -path /sys \) -prune \
+      -o -type d -perm -0002 -print 2>/dev/null | head -50
+  args:
+    executable: /bin/bash
+  register: ww_dirs
+  changed_when: false
+
+- name: chmod g-w,o-w для world-writable каталогов
+  ansible.builtin.file:
+    path: "{{ item }}"
+    mode: "o-w"
+  loop: "{{ ww_dirs.stdout_lines | default([]) }}"
+
+- name: Права на критичные конфиги
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/passwd, mode: "0644" }
+    - { path: /etc/shadow, mode: "0640" }
+    - { path: /etc/group, mode: "0644" }
+    - { path: /etc/gshadow, mode: "0640" }
+  failed_when: false
+
+# --- auditd ---
+- name: Установка auditd
+  ansible.builtin.package:
+    name: "{{ 'auditd' if ansible_os_family == 'Debian' else 'audit' }}"
+    state: present
+  when: enable_auditd | default(true) | bool
+  failed_when: false
+
+- name: Правила аудита
+  ansible.builtin.template:
+    src: ../templates/audit.rules.j2
+    dest: /etc/audit/rules.d/99-harden.rules
+    mode: "0640"
+  when: enable_auditd | default(true) | bool
+  register: audit_rules
+
+- name: Загрузка правил аудита
+  ansible.builtin.command: augenrules --load
+  when: enable_auditd | default(true) | bool and audit_rules is changed
+  changed_when: true
+  failed_when: false
+
+- name: Включение auditd
+  ansible.builtin.service:
+    name: auditd
+    state: started
+    enabled: true
+  when: enable_auditd | default(true) | bool
+  failed_when: false

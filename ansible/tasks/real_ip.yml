@@ -1,0 +1,49 @@
+---
+# 10. Реальный IP / периметр (CDN/proxy)
+- name: Cloudflare IP-диапазоны (авто)
+  ansible.builtin.shell: |
+    if [ -n "{{ cdn_trusted_ips | default('') }}" ]; then
+      echo "{{ cdn_trusted_ips }}"
+    else
+      (curl -fsS https://www.cloudflare.com/ips-v4; curl -fsS https://www.cloudflare.com/ips-v6) | tr '\n' ' '
+    fi
+  args:
+    executable: /bin/bash
+  register: cdn_ips_raw
+  changed_when: false
+  when: cdn_trusted_ips | default('') | length == 0
+
+- name: Список доверенных IP
+  ansible.builtin.set_fact:
+    cdn_trusted_ips_list: >-
+      {{ (cdn_trusted_ips if cdn_trusted_ips | default('') | length > 0 else cdn_ips_raw.stdout)
+         .split() }}
+
+- name: 'nginx: real_ip'
+  ansible.builtin.template:
+    src: ../templates/nginx_realip.conf.j2
+    dest: /etc/nginx/conf.d/10-real-ip.conf
+    mode: "0644"
+  register: nginx_realip
+  when: "'nginx' in ansible_facts.packages | default({})"
+
+- name: 'nginx: reload после real_ip'
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  when: nginx_realip is changed
+
+- name: 'ufw: ограничить 80/443 доверенными IP'
+  ansible.builtin.command: >-
+    ufw allow in on any from {{ item }} to any port {{ p }} proto tcp
+  loop: "{{ cdn_trusted_ips_list | product([80, 443]) | list | map('join', ' ') | list }}"
+  when: fw_backend | default('none') == 'ufw'
+  changed_when: false
+  failed_when: false
+
+- name: 'ufw: убрать открытые 80/443 (заменить на per-IP)'
+  ansible.builtin.command: "ufw --force delete allow {{ item }}/tcp"
+  loop: [80, 443]
+  when: fw_backend | default('none') == 'ufw'
+  changed_when: false
+  failed_when: false

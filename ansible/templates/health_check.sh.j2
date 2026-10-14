@@ -1,0 +1,25 @@
+#!/bin/sh
+# Ansible/harden.sh: ежедневная проверка здоровья сервера
+MSG=""
+DF=$(df -P / | awk 'NR==2{gsub("%","");print $5}')
+[ "$DF" -gt 90 ] && MSG="$MSG\nДиск >90% ($DF%)"
+if command -v systemctl >/dev/null 2>&1; then
+  FAILED=$(systemctl --failed --no-legend 2>/dev/null | wc -l)
+  [ "$FAILED" -gt 0 ] && MSG="$MSG\nFailed systemd units: $FAILED"
+fi
+for c in /etc/letsencrypt/live/*/fullchain.pem; do
+  [ -f "$c" ] || continue
+  if ! openssl x509 -in "$c" -noout -checkend 1209600 >/dev/null 2>&1; then
+    MSG="$MSG\nСертификат истекает <14 дней: $c"
+  fi
+done
+if command -v fail2ban-client >/dev/null 2>&1; then
+  BAN=$(fail2ban-client status 2>/dev/null | awk -F': ' '/Jail list/{print $2}' | tr ',' '\n' | while read -r j; do
+    fail2ban-client status "$j" 2>/dev/null | awk -F': ' '/Currently banned/{print $2}'
+  done | awk '{s+=$1} END{print s+0}')
+  [ "${BAN:-0}" -gt 0 ] && MSG="$MSG\nFail2ban: активных банов: $BAN"
+fi
+if [ -n "$MSG" ]; then
+  printf "harden health-check $(hostname) $(date -Is)\n$MSG\n" | \
+    mail -s "ALERT: health-check $(hostname)" {{ monitor_health_email }}
+fi

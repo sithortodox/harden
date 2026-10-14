@@ -1,0 +1,91 @@
+---
+# 16. Мониторинг: journald, chrony, node_exporter, AIDE, health-check
+- name: 'journald: персистентный лог'
+  ansible.builtin.template:
+    src: ../templates/journald_hardening.conf.j2
+    dest: /etc/systemd/journald.conf.d/99-hardening.conf
+    mode: "0644"
+  register: journald_harden
+
+- name: Перезапуск systemd-journald
+  ansible.builtin.service:
+    name: systemd-journald
+    state: restarted
+  when: journald_harden is changed
+  failed_when: false
+
+- name: Установка chrony
+  ansible.builtin.package:
+    name: chrony
+    state: present
+  failed_when: false
+
+- name: Включение chrony
+  ansible.builtin.service:
+    name: "{{ 'chrony' if ansible_os_family == 'Debian' else 'chronyd' }}"
+    state: started
+    enabled: true
+  failed_when: false
+
+- name: Установка prometheus-node-exporter
+  ansible.builtin.package:
+    name: prometheus-node-exporter
+    state: present
+  failed_when: false
+
+- name: 'node_exporter: только localhost'
+  ansible.builtin.lineinfile:
+    path: /etc/default/prometheus-node-exporter
+    regexp: '^ARGS='
+    line: 'ARGS="--collector.systemd --web.listen-address=127.0.0.1:{{ monitor_exporter_port }}"'
+  failed_when: false
+
+- name: Включение node_exporter
+  ansible.builtin.service:
+    name: prometheus-node-exporter
+    state: started
+    enabled: true
+  failed_when: false
+
+- name: Установка AIDE
+  ansible.builtin.package:
+    name: aide
+    state: present
+  failed_when: false
+
+- name: Инициализация базы AIDE
+  ansible.builtin.command: aideinit
+  args:
+    creates: /var/lib/aide/aide.db
+  failed_when: false
+
+- name: Копия базы AIDE
+  ansible.builtin.copy:
+    src: /var/lib/aide/aide.db.new
+    dest: /var/lib/aide/aide.db
+    remote_src: true
+    mode: "0600"
+  failed_when: false
+
+- name: Еженедельный чек AIDE
+  ansible.builtin.copy:
+    dest: /etc/cron.weekly/harden-aide
+    mode: "0750"
+    content: |
+      #!/bin/sh
+      # harden.sh
+      /usr/bin/aide --check 2>&1 | mail -s "AIDE report $(hostname)" root
+
+- name: Health-check скрипт
+  ansible.builtin.template:
+    src: ../templates/health_check.sh.j2
+    dest: /usr/local/sbin/harden-health-check.sh
+    mode: "0755"
+
+- name: Cron health-check
+  ansible.builtin.copy:
+    dest: /etc/cron.daily/harden-health-check
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      /usr/local/sbin/harden-health-check.sh

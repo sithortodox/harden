@@ -1,0 +1,28 @@
+# Ansible/harden.sh: дополнения acl_check_rcpt
+
+  # Требуем HELO/EHLO
+  deny
+    condition = ${if eq{$helo_name}{}}
+    message = HELO/EHLO required
+
+  # Запрещаем подделку localhost/unknown в HELO
+  deny
+    condition = ${if match{${lc:$helo_name}}{^(localhost|localhost\.localdomain|ip6-localhost|\[127\.0\.0\.1\]|unknown)$}}
+    message = HELO/EHLO '$helo_name' rejected
+
+{% if exim_spf_reject | bool %}
+  # SPF: жёсткий отказ при fail
+  deny
+    condition = ${if def:sender_address_domain}
+    spf = fail
+    message = SPF check failed: $sender_host_address is not authorized to send from $sender_address_domain
+{% endif %}
+
+  # Rate limit на количество RCPT
+  warn
+    ratelimit = 4/1h/peer $sender_host_address
+    log_message = rate limited recipients
+
+  deny
+    ratelimit = 25/1h/peer $sender_host_address
+    message = Too many recipients from $sender_host_address, slow down

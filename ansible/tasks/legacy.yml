@@ -1,0 +1,56 @@
+---
+# 07. Legacy-протоколы / небезопасная авторизация
+- name: Удаление telnet/rsh/ftp-клиентов (apt)
+  ansible.builtin.apt:
+    name: [telnet, rsh-client, rsh-redone-client, ftp]
+    state: absent
+  when: pkg_mgr_family == 'apt'
+  failed_when: false
+
+- name: Удаление telnet/rsh/ftp (dnf/yum)
+  ansible.builtin.package:
+    name: [telnet, rsh, ftp]
+    state: absent
+  when: pkg_mgr_family in ['dnf', 'yum']
+  failed_when: false
+
+- name: Запрет rhosts/.rhosts
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/hosts.equiv
+    - /root/.rhosts
+  failed_when: false
+
+- name: 'hosts.allow: только sshd'
+  ansible.builtin.copy:
+    dest: /etc/hosts.allow
+    mode: "0644"
+    content: |
+      # harden.sh: разрешён только SSH (все остальные — в hosts.deny)
+      sshd: ALL
+  when: ansible_os_family == 'Debian'
+  failed_when: false
+
+- name: 'hosts.deny: запрет всего'
+  ansible.builtin.copy:
+    dest: /etc/hosts.deny
+    mode: "0644"
+    content: |
+      # harden.sh
+      ALL: ALL
+  when: ansible_os_family == 'Debian'
+  failed_when: false
+
+- name: 'OpenSSL: мин. версии TLS/SECLEVEL'
+  ansible.builtin.blockinfile:
+    path: /etc/ssl/openssl.cnf
+    insertafter: '^\[system_default_sect\]'
+    marker: "# {mark} ANSIBLE MANAGED — harden.sh"
+    block: |
+      MinProtocol = TLSv1.2
+      CipherString = {{ tls_ciphers }}
+      Options = ServerPreference
+  when: ansible_facts.services is defined
+  failed_when: false

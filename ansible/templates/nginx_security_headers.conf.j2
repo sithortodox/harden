@@ -1,0 +1,30 @@
+# Ansible/harden.sh — заголовки безопасности и TLS-политика (http-контекст)
+server_tokens off;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "DENY" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=(), interest-cohort=()" always;
+add_header Cross-Origin-Opener-Policy "same-origin" always;
+add_header Cross-Origin-Resource-Policy "same-origin" always;
+{% if coep_enabled | bool %}
+add_header Cross-Origin-Embedder-Policy "require-corp" always;
+{% endif %}
+add_header Content-Security-Policy "{{ csp_policy }}" always;
+add_header Strict-Transport-Security "max-age={{ hsts_max_age }}{% if hsts_include_subdomains | bool %}; includeSubDomains{% endif %}{% if hsts_preload | bool %}; preload{% endif %}" always;
+proxy_hide_header X-Powered-By;
+proxy_hide_header X-AspNet-Version;
+proxy_hide_header X-Runtime;
+
+# TLS (Mozilla intermediate, guideline 6.0)
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers "{{ tls_ciphers }}";
+ssl_prefer_server_ciphers off;
+ssl_session_cache shared:SSL:10m;
+ssl_session_timeout 1d;
+ssl_session_tickets off;
+ssl_stapling on;
+ssl_stapling_verify on;
+ssl_ecdh_curve X25519MLKEM768:X25519:prime256v1:secp384r1;
+resolver 1.1.1.1 8.8.8.8 valid=300s;
+resolver_timeout 5s;
+proxy_cookie_flags ~ secure httponly samesite=lax;

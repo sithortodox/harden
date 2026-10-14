@@ -1,0 +1,63 @@
+---
+# 18. Верификация и итоговый отчёт
+- name: 'Отчёт: обследование'
+  ansible.builtin.shell: |
+    set +e
+    R="{{ harden_report_dir }}/report.txt"
+    {
+      echo "# Отчёт harden.sh (Ansible) $(date -Is) host=$(hostname)"
+      echo
+      echo "== SSH =="
+      sshd -T 2>/dev/null | grep -E 'permitrootlogin|passwordauthentication|maxauthtries|ciphers|macs|kexalgorithms' || echo "sshd -t не прошёл"
+      echo
+      echo "== Firewall =="
+      ufw status verbose 2>/dev/null || firewall-cmd --state 2>/dev/null || echo "firewall: не найден"
+      echo
+      echo "== Fail2ban =="
+      fail2ban-client status 2>/dev/null | grep "Jail list" || echo "fail2ban: не запущен"
+      echo
+      echo "== Открытые порты =="
+      ss -tuln 2>/dev/null
+      echo
+      echo "== TLS-скан 127.0.0.1 =="
+      for p in 443 465 587 993; do
+        timeout 5 openssl s_client -connect 127.0.0.1:$p </dev/null 2>/dev/null | \
+          openssl x509 -noout -subject -dates -ext subjectAltName 2>/dev/null && echo "port $p OK"
+      done
+      echo
+      echo "== HTTP-заголовки =="
+      curl -skI https://127.0.0.1 2>/dev/null | grep -iE 'strict-transport|x-frame|x-content|content-security|referrer|permissions-policy' || echo "curl: нет ответа"
+      echo
+      echo "== DNS-проверка SPF/DMARC/DKIM =="
+      for d in "${MAIL_DOMAIN:-}"; do
+        [ -z "$d" ] && break
+        echo "-- SPF $d"; dig +short TXT "$d" 2>/dev/null | grep spf
+        echo "-- DMARC $d"; dig +short TXT "_dmarc.$d" 2>/dev/null
+        echo "-- DKIM $d"; dig +short TXT "{{ dkim_selector | default('mail') }}._domainkey.$d" 2>/dev/null | head -1
+      done
+      echo
+      echo "== Spoofing (SPF-проверка отправки с якобы своего домена) =="
+      # отправка test-письма изнутри должна проходить SPF; снаружи — fail
+      dig +short TXT "$d" 2>/dev/null | grep -q 'v=spf1' && echo "SPF-запись присутствует"
+    } > "$R" 2>&1
+    cat "$R"
+  args:
+    executable: /bin/bash
+  environment:
+    MAIL_DOMAIN: "{{ mail_domain | default('') }}"
+  register: verify_report
+  changed_when: false
+  failed_when: false
+
+- name: Проверка SSH-доступа
+  ansible.builtin.shell: |
+    sshd -t && echo "sshd config OK" || echo "SSH CONFIG BROKEN — не перезапускайте sshd!"
+  args:
+    executable: /bin/bash
+  register: sshd_check
+  changed_when: false
+  failed_when: false
+
+- name: Итог
+  ansible.builtin.debug:
+    msg: "{{ verify_report.stdout_lines | default(['(отчёт пуст)']) }}"

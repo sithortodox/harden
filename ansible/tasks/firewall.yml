@@ -1,0 +1,86 @@
+---
+# 05. Firewall (ufw | firewalld)
+- name: Определение firewall-бэкенда
+  ansible.builtin.set_fact:
+    fw_backend: >-
+      {{ 'ufw' if (ansible_facts.packages | default({}) | length > 0 and
+           ('ufw' in ansible_facts.packages | default({}))) else
+         ('firewalld' if 'firewalld' in ansible_facts.packages | default({}) else 'none') }}
+
+- name: Установка ufw (Debian)
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+  when: pkg_mgr_family == 'apt' and fw_backend == 'none'
+
+- name: Установка firewalld (RHEL)
+  ansible.builtin.package:
+    name: firewalld
+    state: present
+  when: pkg_mgr_family in ['dnf', 'yum'] and fw_backend == 'none'
+
+- name: Определение backend после установки
+  ansible.builtin.set_fact:
+    fw_backend: "{{ 'ufw' if pkg_mgr_family == 'apt' else 'firewalld' }}"
+
+# --- ufw ---
+- name: 'ufw: deny incoming'
+  ansible.builtin.command: ufw default deny incoming
+  when: fw_backend == 'ufw'
+  changed_when: false
+  failed_when: false
+
+- name: 'ufw: allow outgoing'
+  ansible.builtin.command: ufw default allow outgoing
+  when: fw_backend == 'ufw'
+  changed_when: false
+
+- name: 'ufw: limit SSH'
+  ansible.builtin.command: "ufw limit {{ ssh_port | default(22) }}/tcp comment 'SSH'"
+  when: fw_backend == 'ufw'
+  changed_when: false
+  failed_when: false
+
+- name: 'ufw: allow 80/443'
+  ansible.builtin.command: "ufw allow {{ item }}/tcp"
+  loop: [80, 443]
+  when: fw_backend == 'ufw' and fw_allow_web | default(true) | bool
+  changed_when: false
+  failed_when: false
+
+- name: 'ufw: allow почтовые порты'
+  ansible.builtin.command: "ufw allow {{ item }}/tcp"
+  loop: "{{ (fw_mail_ports | default('')).split() }}"
+  when: fw_backend == 'ufw' and (fw_mail_ports | default('')) | length > 0
+  changed_when: false
+  failed_when: false
+
+- name: 'ufw: enable'
+  ansible.builtin.command: ufw --force enable
+  when: fw_backend == 'ufw'
+  changed_when: false
+
+# --- firewalld ---
+- name: 'firewalld: default zone deny/allow'
+  ansible.builtin.command: "firewall-cmd --permanent --zone=public --{{ item }}"
+  loop:
+    - "add-service=ssh"
+    - "add-service=http"
+    - "add-service=https"
+  when: fw_backend == 'firewalld'
+  changed_when: false
+  failed_when: false
+
+- name: 'firewalld: reload + enable'
+  ansible.builtin.command: "firewall-cmd --reload"
+  when: fw_backend == 'firewalld'
+  changed_when: false
+  failed_when: false
+
+- name: 'firewalld: enable service'
+  ansible.builtin.service:
+    name: firewalld
+    state: started
+    enabled: true
+  when: fw_backend == 'firewalld'
+  failed_when: false

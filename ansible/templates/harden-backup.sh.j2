@@ -1,0 +1,12 @@
+#!/bin/sh
+# Ansible/harden.sh: резервные копии (restic)
+set -e
+. /etc/restic/harden-backup.env
+export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE RESTIC_CACHE_DIR
+restic backup {{ backup_paths }} --tag harden --one-file-system \
+{% for ex in backup_excludes.split() %}
+  --exclude "{{ ex }}" \
+{% endfor %}
+  2>>/var/log/harden-backup.log
+restic forget --keep-daily {{ backup_keep_daily }} --keep-weekly {{ backup_keep_weekly }} \
+  --keep-monthly {{ backup_keep_monthly }} --prune 2>>/var/log/harden-backup.log

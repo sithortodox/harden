@@ -1,0 +1,48 @@
+---
+# 04. SSH
+- name: Установка OpenSSH-сервера
+  ansible.builtin.package:
+    name: openssh-server
+    state: present
+  when: "'openssh-server' not in ansible_facts.packages"
+
+- name: Ensure Include sshd_config.d (RHEL и др.)
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    insertbefore: BOF
+    line: "Include /etc/ssh/sshd_config.d/*.conf"
+  when: ansible_os_family != 'Debian'
+
+- name: Директория sshd_config.d
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d
+    state: directory
+    mode: "0755"
+
+- name: Жёсткая конфигурация sshd (drop-in)
+  ansible.builtin.template:
+    src: ../templates/sshd_hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/99-harden.conf
+    mode: "0644"
+  register: sshd_harden
+
+- name: Проверка конфигурации sshd (sshd -t)
+  ansible.builtin.command: sshd -t
+  changed_when: false
+  when: sshd_harden is changed
+
+- name: Баннер /etc/issue.net
+  ansible.builtin.copy:
+    dest: /etc/issue.net
+    mode: "0644"
+    content: |
+      ***************************************************************************
+      *  ВНИМАНИЕ: доступ к системе разрешён только авторизованным лицам.      *
+      *  Все попытки входа логируются. Несанкционированный доступ запрещён.     *
+      ***************************************************************************
+
+- name: Перезапуск sshd
+  ansible.builtin.service:
+    name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+    state: restarted
+  when: sshd_harden is changed

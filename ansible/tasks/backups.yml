@@ -1,0 +1,75 @@
+---
+# 15. Резервные копии (restic)
+- name: Установка restic
+  ansible.builtin.package:
+    name: restic
+    state: present
+
+- name: Каталоги бэкапов
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - /etc/restic
+    - /var/cache/restic
+
+- name: Генерация пароля (если не задан)
+  ansible.builtin.shell: |
+    umask 077
+    if [ ! -f /etc/restic/password ]; then
+      if [ -n "{{ backup_password | default('') }}" ]; then
+        printf '%s' "{{ backup_password }}" > /etc/restic/password
+      else
+        openssl rand -base64 32 > /etc/restic/password
+      fi
+    fi
+  args:
+    executable: /bin/bash
+    creates: /etc/restic/password
+  no_log: true
+  register: restic_pass
+
+- name: Окружение restic
+  ansible.builtin.template:
+    src: ../templates/restic.env.j2
+    dest: /etc/restic/harden-backup.env
+    mode: "0600"
+
+- name: Скрипт бэкапа
+  ansible.builtin.template:
+    src: ../templates/harden-backup.sh.j2
+    dest: /usr/local/sbin/harden-backup.sh
+    mode: "0750"
+
+- name: systemd units бэкапа
+  ansible.builtin.template:
+    src: "../templates/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - harden-backup.service
+    - harden-backup.timer
+  register: backup_units
+
+- name: systemd daemon-reload
+  ansible.builtin.command: systemctl daemon-reload
+  when: backup_units is changed
+  changed_when: true
+
+- name: Первичная инициализация репозитория + бэкап
+  ansible.builtin.shell: |
+    . /etc/restic/harden-backup.env
+    export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
+    restic init 2>/dev/null || true
+    /usr/local/sbin/harden-backup.sh
+  args:
+    executable: /bin/bash
+  when: restic_pass is changed
+  changed_when: true
+
+- name: Таймер бэкапов
+  ansible.builtin.service:
+    name: harden-backup.timer
+    state: started
+    enabled: true

@@ -1,0 +1,96 @@
+---
+# 03. PAM / пароли / sudo / umask
+- name: Установка pwquality (Debian)
+  ansible.builtin.apt:
+    name: libpam-pwquality
+    state: present
+  when: pkg_mgr_family == 'apt'
+  failed_when: false
+
+- name: Установка pwquality (RHEL)
+  ansible.builtin.package:
+    name: libpwquality
+    state: present
+  when: pkg_mgr_family in ['dnf', 'yum']
+  failed_when: false
+
+- name: Конфигурация pwquality
+  ansible.builtin.template:
+    src: ../templates/pwquality.conf.j2
+    dest: /etc/security/pwquality.conf
+    mode: "0644"
+  failed_when: false
+
+- name: Срок действия паролей (login.defs)
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: "^{{ item.key }}"
+    line: "{{ item.key }} {{ item.value }}"
+  loop:
+    - { key: PASS_MAX_DAYS, value: "90" }
+    - { key: PASS_MIN_DAYS, value: "7" }
+    - { key: PASS_WARN_AGE, value: "14" }
+  failed_when: false
+
+- name: umask 027 для login-сессий
+  ansible.builtin.copy:
+    dest: /etc/profile.d/99-harden-umask.sh
+    mode: "0644"
+    content: |
+      # harden.sh
+      umask 027
+
+- name: 'sudo: use_pty, лог, timestamp'
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/99-harden
+    mode: "0440"
+    validate: "visudo -cf %s"
+    content: |
+      # harden.sh
+      Defaults use_pty
+      Defaults logfile="/var/log/sudo.log"
+      Defaults timestamp_timeout=15
+      Defaults passwd_tries=3
+
+- name: 'pam_faillock: preauth (первые строки common-auth)'
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/common-auth
+    insertbefore: BOF
+    line: "auth required pam_faillock.so preauth silent audit deny=5 unlock_time=900"
+  when: ansible_os_family == 'Debian'
+  register: pam_preauth
+  failed_when: false
+
+- name: 'pam_faillock: authfail (конец common-auth)'
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/common-auth
+    line: "auth required pam_faillock.so authfail audit deny=5 unlock_time=900"
+  when: ansible_os_family == 'Debian'
+  failed_when: false
+
+- name: 'pam_faillock: account (common-account)'
+  ansible.builtin.lineinfile:
+    path: /etc/pam.d/common-account
+    line: "account required pam_faillock.so"
+  when: ansible_os_family == 'Debian'
+  failed_when: false
+
+- name: faillock.conf
+  ansible.builtin.copy:
+    dest: /etc/security/faillock.conf
+    mode: "0644"
+    content: |
+      deny = 5
+      unlock_time = 900
+      even_deny_root
+      root_unlock_time = 600
+      audit
+  failed_when: false
+
+- name: Удаление nullok из PAM (запрет пустых паролей)
+  ansible.builtin.replace:
+    path: /etc/pam.d/common-auth
+    regexp: '(\s)nullok(\s)'
+    replace: '\1\2'
+  when: ansible_os_family == 'Debian'
+  failed_when: false

@@ -1,0 +1,39 @@
+# Ansible/harden.sh — жёсткая конфигурация SSH
+Port {{ ssh_port }}
+PermitRootLogin {{ 'no' if ssh_permit_root | bool else 'prohibit-password' }}
+PasswordAuthentication {{ 'no' if ssh_password_auth | bool else 'yes' }}
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+UsePAM yes
+{% if ssh_password_auth | bool %}
+AuthenticationMethods publickey
+{% endif %}
+MaxAuthTries {{ ssh_max_auth_tries }}
+MaxSessions 5
+MaxStartups 10:30:60
+LoginGraceTime 30
+X11Forwarding no
+AllowTcpForwarding no
+AllowAgentForwarding no
+AllowStreamLocalForwarding no
+PermitTunnel no
+GatewayPorts no
+PermitUserEnvironment no
+PermitUserRC no
+ClientAliveInterval {{ ssh_client_alive_interval }}
+ClientAliveCountMax {{ ssh_client_alive_count_max }}
+Compression no
+IgnoreRhosts yes
+HostbasedAuthentication no
+PrintMotd no
+LogLevel VERBOSE
+SyslogFacility AUTH
+RekeyLimit 1G 1h
+Umask 0077
+SftpServer internal-sftp
+HostKeyAlgorithms {{ ssh_hostkey_algos }}
+KexAlgorithms {{ ssh_kex }}
+Ciphers {{ ssh_ciphers }}
+MACs {{ ssh_macs }}
